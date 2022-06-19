@@ -13,7 +13,7 @@
         "type": "char",
         "hidden":true,
         "length": 32,
-        "value": "20220615T183524"
+        "value": "20220619T204500"
     },
     {
         "name": "splunkindexer",
@@ -96,24 +96,6 @@
     {
         "name": "silenceSerial",
         "label": "deactivate Serial output",
-        "type": "bool",
-        "value": false
-    },
-    {
-        "name": "unifiedSensorData",
-        "label": "unified sensors",
-        "type": "bool",
-        "value": true
-    },
-    {
-        "name": "pirInstalled",
-        "label": "PIR Sensor @D5?",
-        "type": "bool",
-        "value": false
-    },
-    {
-        "name": "ldrInstalled",
-        "label": "LDR Sensor @A0?",
         "type": "bool",
         "value": false
     }

@@ -1,26 +1,36 @@
-#include <Arduino.h>
+  #include <Arduino.h>
 
 // used to get the reset reason
-extern "C" {
-#include <user_interface.h>
-}
-int rst_cause;
+  extern "C" {
+  #include <user_interface.h>
+  }
+  int rst_cause;
 
 // Stuff for the WiFi manager 
-#include "LittleFS.h"
-#include "WiFiManager.h"
-#include "webServer.h"
-#include "updater.h"
-#include "fetch.h"
-#include "configManager.h"
-#include "dashboard.h"
-#include "timeSync.h"
-#include <TZ.h>
-#include "ESP8266HTTPClient.h"
+  #include "LittleFS.h"
+  #include "WiFiManager.h"
+  #include "webServer.h"
+  #include "updater.h"
+  #include "fetch.h"
+  #include "configManager.h"
+  #include "dashboard.h"
+  #include "timeSync.h"
+  #include <TZ.h>
+  #include "ESP8266HTTPClient.h"
+  #include "ESP8266mDNS.h"
 
-#include "ESP8266mDNS.h"
-
-
+// Stuff for MODBUS
+  #include <SensorModbusMaster.h>
+  // Define the sensor's modbus address
+  byte modbusAddress = 0x01;   // The sensor's modbus address, or SlaveID
+  long modbusBaudRate = 9600; // The baud rate the sensor uses
+  // Construct the modbus instance
+  modbusMaster modbus;
+  /*
+    Since this is using the only serial connection available on the esp8266
+    all serial printouts (debug prints...) are silenced in this source code.
+    This device is not being connected to a computer to read out the serial communications.
+  */
 
 // LEDs
   #define Heartbeat_LED D4 // D4 = GPIO2 = onchip LED
@@ -114,10 +124,7 @@ void splunkpost(String PostData){
   http.addHeader("Content-Type", "application/json");
   http.addHeader("Authorization", tokenValue);
 
-  if (!configManager.data.silenceSerial){
-    Serial.print("splunking: ");
-    Serial.print(payload);
-  }
+  if (!configManager.data.silenceSerial){Serial.print("splunking: "); Serial.print(payload);}
 
 
   String contentlength = String(payload.length());
@@ -200,8 +207,14 @@ void setup()
       break;     
   }
 
-  Serial.begin(115200);
-  Serial.println(rst_string);
+  Serial.begin(modbusBaudRate);
+  if (!configManager.data.silenceSerial){Serial.println(rst_string);}
+
+  // MODBUS
+  // Start the modbus instance
+  modbus.begin(modbusAddress, &Serial);
+
+
 
   LittleFS.begin(); GUI.begin(); configManager.begin(); dash.begin(1000);
   configManager.setConfigSaveCallback(saveCallback); // executed everytime a new config is saved
@@ -219,7 +232,6 @@ void setup()
   strcat(AP_Name, " _ ");
   strcat(AP_Name, WiFi.macAddress().c_str());
   WiFiManager.begin(AP_Name); //192.168.4.1
-  //WiFiManager.begin("newNetwork"); //192.168.4.1
 
   // if no client name is set (default=MAC_ADRESS) return the MAC instead
   if (String(configManager.data.clientName) == "MAC_ADDRESS"){
@@ -283,11 +295,34 @@ void loop()
 
     digitalWrite(Splunking_LED, HIGH);
 
-  String uptime = (rst_cause == REASON_DEEP_SLEEP_AWAKE) ? "" : "\"uptime\": \"" + String(millis()/1000) + "\" ";
+  
+  // read modbus input register 
+  float volt = modbus.float32FromRegister(0x04, 0x00, bigEndian); 
+  float ampere = modbus.float32FromRegister(0x04, 0x06, bigEndian); 
+  float watt = modbus.float32FromRegister(0x04, 0x0C, bigEndian);
+  float power_factor = modbus.float32FromRegister(0x04, 0x1E, bigEndian);
+  float phase_angle = modbus.float32FromRegister(0x04, 0x24, bigEndian);
+  float frequency = modbus.float32FromRegister(0x04, 0x46, bigEndian);
+  float energy = modbus.float32FromRegister(0x04, 0x48, bigEndian);
+
+  String volt_splunk =      "\"volt\": \"" + String(volt) + "\" ";
+  String ampere_splunk = ", \"ampere\": \"" + String(ampere) + "\" ";
+  String watt_splunk =    ", \"watt\": \"" + String(watt) + "\" ";
+  String power_factor_splunk =    ", \"powerFactor\": \"" + String(power_factor) + "\" ";
+  String phase_angle_splunk =    ", \"phaseAngle\": \"" + String(phase_angle) + "\" ";
+  String frequency_splunk =    ", \"frequency\": \"" + String(frequency) + "\" ";
+  String energy_splunk =    ", \"energy\": \"" + String(energy) + "\" ";
+  String uptime = (rst_cause == REASON_DEEP_SLEEP_AWAKE) ? "" : ", \"uptime\": \"" + String(millis()/1000) + "\" ";
 
   // build the event data string
-    String eventData = uptime;
-
+    String eventData =  volt_splunk
+                      + ampere_splunk
+                      + watt_splunk
+                      + power_factor_splunk
+                      + phase_angle_splunk
+                      + frequency_splunk
+                      + energy_splunk
+                      + uptime;
 
   //send off the data
     splunkpost(eventData);
@@ -305,12 +340,15 @@ void loop()
   // deepsleep config of ZERO will disable deepsleep 
   if (configManager.data.deepsleep != 0){
     if (millis() > 60000 && rst_cause != REASON_DEEP_SLEEP_AWAKE){
-      Serial.println("60s after restart.. going to deepsleep");
+        if (!configManager.data.silenceSerial){Serial.println("60s after restart.. going to deepsleep");}
+      
+      
       ESP.deepSleep(configManager.data.deepsleep * 1000000);
     }
     // if woken up from deep sleep .. go back to deep sleep
     if (rst_cause == REASON_DEEP_SLEEP_AWAKE){
-      Serial.println("woke up, did work, going to sleep again");
+      if (!configManager.data.silenceSerial){Serial.println("woke up, did work, going to sleep again");}
+      
       ESP.deepSleep(configManager.data.deepsleep * 1000000);
     } // from seconds in webconfig to us in function call = "* 1000000"
   }
