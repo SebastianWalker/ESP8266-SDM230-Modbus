@@ -47,8 +47,7 @@
 void(* resetFunc) (void) = 0; //declare reset function @ address 0
 
 
-/*
- * Returns a string of Localtime
+/* Returns a string of Localtime
  * in format "%Y-%m-%d %H:%M:%S"
  */
 String getLocaltime(){
@@ -63,8 +62,7 @@ String getLocaltime(){
   return timeStringBuff;
 }
 
-/*
- * Returns a string of time in UTC
+/* Returns a string of time in UTC
  * in format "%Y-%m-%d %H:%M:%S"
  */
 String getUTC(){
@@ -79,8 +77,7 @@ String getUTC(){
   return timeStringBuff;
 }
 
-/*
- * Returns epoch time as long
+/* Returns epoch time as long
  */
 long getEpoch(){
   time_t now = time(nullptr);
@@ -88,8 +85,7 @@ long getEpoch(){
 }
 
 
-/*
- * Post event data to splunk http event collector
+/* Post event data to splunk http event collector
  * 
  * PostData: 
  * a string of json formatted key:value pairs 
@@ -148,8 +144,62 @@ void splunkpost(String PostData){
   dash.send();
 }
 
-/*
- * Triggers a software restart
+
+/* Post metric data to splunk http event collector
+ * 
+ * PostData: 
+ * a string of json formatted key:value pairs 
+ * just everything between the curly braces of the event node
+ */
+void splunkpostMetric(String PostData){
+
+  // only send time string to splunk if it is synced, else omit it and let splunk use index time...
+  String timeField = timeSync.isSynced() ? "\"time\" : \"" + String(getEpoch()) + "\" , " : "" ;
+
+  String payload  = "{ \"host\": \"" + String(configManager.data.clientName) + "\", " 
+                      "\"sourcetype\": \"" + String(configManager.data.sourcetype) + "\", " 
+                      "\"index\": \"" + String("homemetrics") + "\", " 
+                      + timeField +
+                      "\"fields\" : {"
+                                      "\"IP\" : \"" + String(WiFi.localIP().toString()) + "\" , "
+                                      "\"interval\" : \"" + String(configManager.data.updateSpeed/1000) + "\" , "
+                                      + PostData +
+                        "} "
+                    "}";
+
+  //Build the request
+  WiFiClient client; // just to avoid deprecation error on http.begin(url)
+  HTTPClient http;
+  String splunkurl="http://"+ String(configManager.data.splunkindexer) +"/services/collector";
+  String tokenValue="Splunk " + String(configManager.data.collectorToken);
+  
+  // fire at will!! 
+  http.begin(client, splunkurl);
+  http.addHeader("Content-Type", "application/json");
+  http.addHeader("Authorization", tokenValue);
+
+  if (!configManager.data.silenceSerial){Serial.print("splunking: "); Serial.print(payload);}
+
+
+  String contentlength = String(payload.length());
+  http.addHeader("Content-Length", contentlength );
+  int httpResponseCode = http.POST(payload);
+  if (!configManager.data.silenceSerial){
+    http.writeToStream(&Serial);
+    Serial.printf("HTTP: %d", httpResponseCode);  
+    Serial.println();
+  }
+  http.end();
+
+  // check for http error
+  if (httpResponseCode > 200){
+    httpError++;
+    if (httpError>10){resetFunc();}
+  }
+
+}
+
+/* Triggers a software restart
  * resets the flag in config manager
  * send INFO msg to splunk
  */
@@ -162,8 +212,8 @@ void forceRestart(){
 }
 
 
-/*
- * callback function for configManager save to EEPROM
+/* callback function for configManager save to EEPROM
+ * 
  */
 void saveCallback(){
   // do stuff on save
@@ -172,6 +222,8 @@ void saveCallback(){
   // didnt find a way to get the change within the loop.. so change it here anyways
   MDNS.setHostname(configManager.data.clientName);
 }
+
+
 void setup()
 {
   // enable light sleep = wifi/cpu off during delay calls
@@ -300,34 +352,61 @@ void loop()
   float volt = modbus.float32FromRegister(0x04, 0x00, bigEndian); 
   float ampere = modbus.float32FromRegister(0x04, 0x06, bigEndian); 
   float watt = modbus.float32FromRegister(0x04, 0x0C, bigEndian);
+  float apparent_power = modbus.float32FromRegister(0x04, 0x12, bigEndian); 
+  float reactive_power = modbus.float32FromRegister(0x04, 0x18, bigEndian); 
   float power_factor = modbus.float32FromRegister(0x04, 0x1E, bigEndian);
   float phase_angle = modbus.float32FromRegister(0x04, 0x24, bigEndian);
   float frequency = modbus.float32FromRegister(0x04, 0x46, bigEndian);
-  float energy = modbus.float32FromRegister(0x04, 0x48, bigEndian);
+  float energy_imp_active = modbus.float32FromRegister(0x04, 0x48, bigEndian);
+  float energy_imp_reactive = modbus.float32FromRegister(0x04, 0x4C, bigEndian);
+  float power_demand = modbus.float32FromRegister(0x04, 0x0054, bigEndian);
+  float current_power_demand = modbus.float32FromRegister(0x04, 0x0056, bigEndian);
+  float current_demand = modbus.float32FromRegister(0x04, 0x0102, bigEndian);
 
-  String volt_splunk =      "\"volt\": \"" + String(volt) + "\" ";
-  String ampere_splunk = ", \"ampere\": \"" + String(ampere) + "\" ";
-  String watt_splunk =    ", \"watt\": \"" + String(watt) + "\" ";
-  String power_factor_splunk =    ", \"powerFactor\": \"" + String(power_factor) + "\" ";
-  String phase_angle_splunk =    ", \"phaseAngle\": \"" + String(phase_angle) + "\" ";
-  String frequency_splunk =    ", \"frequency\": \"" + String(frequency) + "\" ";
-  String energy_splunk =    ", \"energy\": \"" + String(energy) + "\" ";
-  String uptime = (rst_cause == REASON_DEEP_SLEEP_AWAKE) ? "" : ", \"uptime\": \"" + String(millis()/1000) + "\" ";
+  float energy_total_active = modbus.float32FromRegister(0x04, 0x0156, bigEndian);
+  float energy_total_reactive = modbus.float32FromRegister(0x04, 0x0158, bigEndian);
 
   // build the event data string
-    String eventData =  volt_splunk
-                      + ampere_splunk
-                      + watt_splunk
-                      + power_factor_splunk
-                      + phase_angle_splunk
-                      + frequency_splunk
-                      + energy_splunk
+    String uptime = (rst_cause == REASON_DEEP_SLEEP_AWAKE) ? "" : ", \"uptime\": \"" + String(millis()/1000) + "\" "; // because deepsleep resets the millis counter --> after wake up it's always zero
+    String eventData =  "\"volt\": \"" + String(volt, 3) + "\" "
+                      + ", \"ampere\": \"" + String(ampere, 3) + "\" "
+                      + ", \"watt\": \"" + String(watt, 3) + "\" "
+                      + ", \"apparentPower\": \"" + String(apparent_power, 3) + "\" "
+                      + ", \"reactivePower\": \"" + String(reactive_power, 3) + "\" "
+                      + ", \"powerFactor\": \"" + String(power_factor, 3) + "\" "
+                      + ", \"phaseAngle\": \"" + String(phase_angle, 3) + "\" "
+                      + ", \"frequency\": \"" + String(frequency, 3) + "\" "
+                      + ", \"energy\": \"" + String(energy_imp_active, 3) + "\" "
+                      + ", \"reactiveEnergy\": \"" + String(energy_imp_reactive, 3) + "\" "
+                      + ", \"currentDemand\": \"" + String(current_demand, 3) + "\" "
+                      + ", \"powerDemand\": \"" + String(power_demand, 3) + "\" "
                       + uptime;
+
+  // build the metric data string
+  String uptimeMetric = (rst_cause == REASON_DEEP_SLEEP_AWAKE) ? "" : ", \"metric_name:selfPV.uptime\":" + String(millis()/1000); // because deepsleep resets the millis counter --> after wake up it's always zero
+  String metricData =     "\"metric_name:selfPV.current.active\":" + String(ampere, 3)
+                      + ", \"metric_name:selfPV.current.demand\":" + String(current_demand, 3)
+                      + ", \"metric_name:selfPV.energy.import.active\":" + String(energy_imp_active, 3)
+                      + ", \"metric_name:selfPV.energy.import.reactive\":" + String(energy_imp_reactive, 3)
+                      + ", \"metric_name:selfPV.energy.total.active\":" + String(energy_total_active, 3)
+                      + ", \"metric_name:selfPV.energy.total.reactive\":" + String(energy_total_reactive, 3)
+                      + ", \"metric_name:selfPV.voltage\":" + String(volt, 3)
+                      + ", \"metric_name:selfPV.power.demand\":" + String(power_demand, 3)
+                      + ", \"metric_name:selfPV.power.demand.current\":" + String(current_power_demand, 3)
+                      + ", \"metric_name:selfPV.power.active\":" + String(watt, 3)
+                      + ", \"metric_name:selfPV.power.apparent\":" + String(apparent_power, 3)
+                      + ", \"metric_name:selfPV.power.reactive\":" + String(reactive_power, 3)
+                      + ", \"metric_name:selfPV.power.factor\":" + String(power_factor, 3)
+                      + ", \"metric_name:selfPV.phaseAngle\":" + String(phase_angle, 3)
+                      + ", \"metric_name:selfPV.frequency\":" + String(frequency, 3)
+                      + uptimeMetric;
 
   //send off the data
     splunkpost(eventData);
+    splunkpostMetric(metricData);
 
-    digitalWrite(Splunking_LED, LOW);
+
+    //digitalWrite(Splunking_LED, LOW);
 
   }
 
