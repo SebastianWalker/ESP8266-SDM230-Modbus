@@ -320,6 +320,9 @@ void setup()
   }
 }
 
+bool updateCaptivePortalEnterTimer = true;
+long CaptivePortalEnterTimer = 0;
+
 void loop()
 {
   // software interrupts.. dont touch next line!
@@ -329,11 +332,18 @@ void loop()
   if (WiFiManager.isCaptivePortal() && rst_cause != REASON_DEEP_SLEEP_AWAKE){
     digitalWrite(Heartbeat_LED, (millis() / 100) % 2);
     
-    // fixfix suicide after to much time spent in captive portal
+    // suicide after to much time spent in captive portal
+    if (updateCaptivePortalEnterTimer){
+      CaptivePortalEnterTimer=millis();
+      updateCaptivePortalEnterTimer = false;
+    }
+    
+    if (millis()-CaptivePortalEnterTimer > 60000){forceRestart();}
 
     return;
   }
   else{
+    updateCaptivePortalEnterTimer = true;
     // toggle LED every second if heartbeat is activated in config
     digitalWrite(Heartbeat_LED, configManager.data.heartbeat ? ((millis() / 1000) % 2) : 1);  
   }
@@ -405,6 +415,12 @@ void loop()
     splunkpost(eventData);
     splunkpostMetric(metricData);
 
+  //send single metrics along with units of measurement
+  splunkpostMetric("\"location\":\"outdoor\", \"unit\":\"A\", \"metric_name:selfPV1.current.active\":" + String(ampere, 3));
+  splunkpostMetric("\"location\":\"outdoor\", \"unit\":\"A\", \"metric_name:selfPV1.current.demand\":" + String(current_demand, 3));
+  splunkpostMetric("\"location\":\"outdoor\", \"unit\":\"kWh\", \"metric_name:selfPV1.energy.import.active\":" + String(energy_imp_active, 3));
+  splunkpostMetric("\"location\":\"outdoor\", \"unit\":\"kVArh\", \"metric_name:selfPV1.energy.import.reactive\":" + String(energy_imp_reactive, 3));
+  splunkpostMetric("\"location\":\"outdoor\", \"unit\":\"W\", \"metric_name:selfPV1.power.active\":" + String(watt, 3));
 
     //digitalWrite(Splunking_LED, LOW);
 
