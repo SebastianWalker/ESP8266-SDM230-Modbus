@@ -13,7 +13,7 @@
         "type": "char",
         "hidden":true,
         "length": 32,
-        "value": "20220621T203000"
+        "value": "20220715T201100"
     },
     {
         "name": "splunkindexer",
@@ -55,24 +55,6 @@
         "label": "Update (ms)",
         "type": "uint16_t",
         "value": 5000
-    },
-    {
-        "name": "delay",
-        "label": "lightsleep (ms)",
-        "type": "uint16_t",
-        "value": 0,
-        "min": 0,
-        "max": 500,
-        "step": 50
-    },
-    {
-        "name": "deepsleep",
-        "label": "Deepsleep (s)",
-        "type": "uint16_t",
-        "value": 0,
-        "min": 0,
-        "max": 3600,
-        "step": 10
     },
     {
         "name": "sensorTimezone",
